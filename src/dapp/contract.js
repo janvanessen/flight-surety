@@ -2,6 +2,9 @@ import FlightSuretyApp from '../../build/contracts/FlightSuretyApp.json';
 import Config from './config.json';
 import Web3 from 'web3';
 
+const INIT_COUNT_AIRLINES = 5;
+const INIT_COUNT_PASSENGERS = 5;
+
 export default class Contract {
     constructor(network, callback) {
 
@@ -16,16 +19,16 @@ export default class Contract {
 
     initialize(callback) {
         this.web3.eth.getAccounts((error, accts) => {
-           
+
             this.owner = accts[0];
 
             let counter = 1;
-            
-            while(this.airlines.length < 5) {
+
+            while (this.airlines.length < INIT_COUNT_AIRLINES) {
                 this.airlines.push(accts[counter++]);
             }
 
-            while(this.passengers.length < 5) {
+            while (this.passengers.length < INIT_COUNT_PASSENGERS) {
                 this.passengers.push(accts[counter++]);
             }
 
@@ -34,10 +37,10 @@ export default class Contract {
     }
 
     isOperational(callback) {
-       let self = this;
-       self.flightSuretyApp.methods
+        let self = this;
+        self.flightSuretyApp.methods
             .isOperational()
-            .call({ from: self.owner}, callback);
+            .call({ from: self.owner }, callback);
     }
 
     fetchFlightStatus(flight, callback) {
@@ -46,11 +49,18 @@ export default class Contract {
             airline: self.airlines[0],
             flight: flight,
             timestamp: Math.floor(Date.now() / 1000)
-        } 
+        }
         self.flightSuretyApp.methods
             .fetchFlightStatus(payload.airline, payload.flight, payload.timestamp)
-            .send({ from: self.owner}, (error, result) => {
+            .send({ from: self.owner }, (error, result) => {
                 callback(error, payload);
             });
+    }
+
+    buyInsurance(flight, amount) {
+        let self = this;
+        self.flightSuretyApp.methods
+            .buyInsurance(flight)
+            .send({ from: self.passengers[0], value: self.web3.utils.toWei(amount, "ether") });
     }
 }

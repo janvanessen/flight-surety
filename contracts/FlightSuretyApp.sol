@@ -1,4 +1,4 @@
-pragma solidity >=0.4.25;
+pragma solidity >=0.6.0;
 
 // It's important to avoid vulnerabilities due to numeric overflow bugs
 // OpenZeppelin's SafeMath library, when used correctly, protects agains such bugs
@@ -28,14 +28,8 @@ contract FlightSuretyApp {
     FlightSuretyData flightSuretyData;
 
     address private contractOwner; // Account used to deploy contract
-
-    struct Flight {
-        bool isRegistered;
-        uint8 statusCode;
-        uint256 updatedTimestamp;
-        address airline;
-    }
-    mapping(bytes32 => Flight) private flights;
+    address[] private multiCalls = new address[](0);
+    address private airlineInRegistrationProcess;
 
     /********************************************************************************************/
     /*                                       FUNCTION MODIFIERS                                 */
@@ -63,10 +57,10 @@ contract FlightSuretyApp {
         _;
     }
 
-    modifier onlyAirline(address airlineID) {
+    modifier onlyRegisteredAirline(address airlineID) {
         require(
             flightSuretyData.isRegisteredAirline(airlineID),
-            "Caller is not contract owner"
+            "Caller is not registered airline"
         );
         _;
     }
@@ -103,26 +97,72 @@ contract FlightSuretyApp {
      */
     function registerAirline(address airlineID)
         external
-        onlyAirline(airlineID) // Only existing airline may register a new airline
+        onlyRegisteredAirline(msg.sender) // Only existing airline may register a new airline
         returns (bool success, uint256 votes)
     {
-        if (flightSuretyData.isMultiPartyConsenusRequired()) {
-            // Registration of fifth and subsequent airlines requires multi-party consensus of 50% of registered airlines
-            // success, vote
-
-        } else {
+        require(
+            !flightSuretyData.isRegisteredAirline(airlineID),
+            "Airline is alreaddy registered"
+        );
+        votes = 0;
+        success = false;
+        if (!flightSuretyData.isMultiPartyConsenusRequired()) {
             // Only existing airline may register a new airline until there are at least four airlines registered
             flightSuretyData.registerAirline(airlineID);
-            return (success, 0);
+            success = true;
+        } else {
+            // Registration of fifth and subsequent airlines requires multi-party consensus of 50% of registered airlines
+
+            if (airlineInRegistrationProcess == address(0)) {
+                airlineInRegistrationProcess = airlineID;
+            } else {
+                require(
+                    airlineInRegistrationProcess == airlineID,
+                    "You have to vote for the airline that is in the registration process"
+                );
+            }
+
+            bool isDuplicate = false; // prevent double voting
+            for (uint256 c = 0; c < multiCalls.length; c++) {
+                if (multiCalls[c] == msg.sender) {
+                    isDuplicate = true;
+                    break;
+                }
+            }
+            require(!isDuplicate, "Caller has already called this function.");
+            multiCalls.push(msg.sender);
+            votes = multiCalls.length;
+            uint256 totalCountAirlines = flightSuretyData
+                .getRegisteredAirlineCounter();
+            if (votes.mul(2) >= totalCountAirlines) {
+                flightSuretyData.registerAirline(airlineID);
+                multiCalls = new address[](0);
+                airlineInRegistrationProcess = address(0);
+                success = true;
+            } else {
+                success = false;
+            }
         }
+
+        return (success, votes);
     }
 
-    /**
-     * @dev Register a future flight for insuring.
-     *
-     */
+    function clearVoting() external requireContractOwner {
+        multiCalls = new address[](0);
+        airlineInRegistrationProcess = address(0);
+    }
 
-    function registerFlight() external pure {}
+    function fund() external onlyRegisteredAirline(msg.sender) {
+        flightSuretyData.fund();
+    }
+
+    function buyInsurance(string calldata flight) 
+        external
+        payable
+        requireIsOperational
+    {
+        flightSuretyData.buy(flight, msg.sender, msg.value);
+    }
 
     /**
      * @dev Called after oracle has updated flight status
@@ -134,7 +174,16 @@ contract FlightSuretyApp {
         string memory flight,
         uint256 timestamp,
         uint8 statusCode
-    ) internal pure {}
+    ) internal {
+        require(flightSuretyData.isAirlineWithFunds(airline), "Not a registered airline with funds");
+        if (statusCode == STATUS_CODE_LATE_AIRLINE) {
+            flightSuretyData.creditInsurees(flight);
+        }                
+    }
+
+    function widthdraw() external {
+        flightSuretyData.widthdraw(msg.sender);
+    }
 
     // Generate a request for oracles to fetch flight information
     function fetchFlightStatus(
@@ -325,11 +374,30 @@ contract FlightSuretyApp {
     // endregion
 }
 
+abstract contract FlightSuretyData {
+    function registerAirline(address airlineID) external virtual;
 
-contract FlightSuretyData {
-    function registerAirline(address airlineID) external;
+    function isRegisteredAirline(address airlineID)
+        public
+        virtual
+        view
+        returns (bool);
 
-    function isRegisteredAirline(address airlineID) public view returns (bool);
+    function isMultiPartyConsenusRequired() public virtual view returns (bool);
 
-    function isMultiPartyConsenusRequired() public view returns (bool);
+    function getRegisteredAirlineCounter()
+        public
+        virtual
+        view
+        returns (uint256);
+
+    function fund() public virtual payable;
+
+    function buy(string calldata flight, address passenger, uint256 amount) external payable virtual;
+
+    function isAirlineWithFunds(address airlineID) public view virtual returns (bool);
+
+    function creditInsurees(string calldata flight) external virtual;
+
+    function widthdraw(address insuree) external virtual;
 }
