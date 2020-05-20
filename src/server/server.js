@@ -48,9 +48,12 @@ const start = async () => {
 
 const submitResponse = async (oracle, index, airline, flight, timestamp, statusCode) => {
   if (oracle.indexes.includes(index)) {
-    await flightSuretyApp.methods.submitOracleResponse(index, airline, flight, timestamp, statusCode)
-      .send({ from: oracle.address, gas: 2500000 });
-    console.log(`Submit: StatusCode: ${statusCode}, Index ${index}, Airline: ${airline}, Flight ${flight}, Timestamp ${timestamp}`)
+    try {
+      await flightSuretyApp.methods.submitOracleResponse(index, airline, flight, timestamp, statusCode)
+        .send({ from: oracle.address, gas: 2500000 });
+      console.log(`Submit: StatusCode: ${statusCode}, Index ${index}, Airline: ${airline}, Flight ${flight}, Timestamp ${timestamp}`)
+    } catch (e) {
+    }
   }
 }
 
@@ -81,6 +84,12 @@ const app = express();
 app.get('/api', (req, res) => {
   res.send({
     message: 'An API for use with your Dapp!'
+  })
+})
+
+app.get('/api/registered-oracles', (req, res) => {
+  res.json({
+    oracles: oracles.length
   })
 })
 

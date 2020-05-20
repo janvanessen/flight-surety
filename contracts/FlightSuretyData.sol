@@ -36,7 +36,6 @@ contract FlightSuretyData {
 
     mapping(address => bool) private authorizedCallers; // for testing
 
-
     /********************************************************************************************/
     /*                                       EVENT DEFINITIONS                                  */
     /********************************************************************************************/
@@ -47,6 +46,8 @@ contract FlightSuretyData {
      */
     constructor() public {
         contractOwner = msg.sender;
+        // First airline is registered when contract is deployed.
+        registerAirline(contractOwner, contractOwner); 
     }
 
     /********************************************************************************************/
@@ -74,23 +75,13 @@ contract FlightSuretyData {
         _;
     }
 
-    modifier onlyRegisteredAirline() {
-        require(
-            isRegisteredAirline(msg.sender),
-            "Caller is not registered airline"
-        );
-        _;
-    }
-
     modifier paidEnough(uint256 _price) {
         require(msg.value >= FUND_AMOUNT, "Not paid enough");
         _;
     }
 
-      modifier requireAuthorizedCaller() {
-        require(
-            authorizedCallers[msg.sender],
-            "Not authorized");
+    modifier requireAuthorizedCaller() {
+        require(authorizedCallers[msg.sender], "Not authorized");
         _;
     }
 
@@ -117,7 +108,7 @@ contract FlightSuretyData {
     }
 
     function isMultiPartyConsenusRequired() public view returns (bool) {
-        return (airlineCounter >= MULTI_PARTY_MIN_COUNT);
+        return (airlineCounter >= MULTI_PARTY_MIN_COUNT - 1);
     }
 
     function getRegisteredAirlinesCount() public view returns (uint256) {
@@ -133,7 +124,7 @@ contract FlightSuretyData {
             keccak256(abi.encodePacked(s1)) == keccak256(abi.encodePacked(s2));
     }
 
-      function authorizeCaller(address caller) external requireContractOwner {
+    function authorizeCaller(address caller) external requireContractOwner {
         authorizedCallers[caller] = true;
     }
 
@@ -142,6 +133,10 @@ contract FlightSuretyData {
      *
      * When operational mode is disabled, all write transactions except for this one will fail
      */
+    function setOperatingStatus(bool status) public requireContractOwner {
+        operational = status;
+    }
+
 
     /********************************************************************************************/
     /*                                     SMART CONTRACT FUNCTIONS                             */
@@ -153,11 +148,15 @@ contract FlightSuretyData {
      *
      */
 
-    function registerAirline(address airlineID) external {
+    function registerAirline(address airlineID, address caller) public requireIsOperational {
         if (airlineCounter > 0) {
             require(
-                isRegisteredAirline(msg.sender),
+                isRegisteredAirline(caller),
                 "Caller is not a registered airline"
+            );
+            require(
+                isAirlineWithFunds(caller),
+                "Caller is not a registered airline with funds"
             );
         }
 
@@ -166,15 +165,13 @@ contract FlightSuretyData {
             "Airline is already registered."
         );
 
-        bool isRegistered = false;
         bool hasProvidedFunds = false;
-        if (airlineCounter < 5) {
-            isRegistered = true;
+        if (airlineCounter < MULTI_PARTY_MIN_COUNT - 1) {
             hasProvidedFunds = true;
         }
 
         airlines[airlineID] = Airline({
-            isRegistered: isRegistered,
+            isRegistered: true,
             hasProvidedFunds: hasProvidedFunds
         });
         airlineCounter = airlineCounter.add(1);
@@ -189,8 +186,7 @@ contract FlightSuretyData {
         string calldata flight,
         address payable passenger,
         uint256 amount
-    ) external payable {
-        // TODO: require isAirlineWithFunds
+    ) external payable requireIsOperational {
         require(amount > 0, "Not paid enough");
         Insurance memory insurance = Insurance({
             flight: flight,
@@ -209,7 +205,10 @@ contract FlightSuretyData {
     /**
      *  @dev Credits payouts to insurees
      */
-    function creditInsurees(string calldata flight) external {
+    function creditInsurees(string calldata flight)
+        external
+        requireIsOperational
+    {
         for (uint256 i = 0; i < insurances.length; i++) {
             if (compareStringsbyBytes(insurances[i].flight, flight)) {
                 address passenger = insurances[i].passenger;
@@ -226,7 +225,7 @@ contract FlightSuretyData {
      *  @dev Transfers eligible payout funds to insuree
      *
      */
-    function widthdraw(address payable insuree) external {
+    function widthdraw(address payable insuree) external requireIsOperational {
         uint256 creditsInsuree = credits[insuree];
         require(creditsInsuree > 0, "You have no credits");
         credits[insuree] = 0;
@@ -239,14 +238,15 @@ contract FlightSuretyData {
      *
      */
 
-    function fund() public payable onlyRegisteredAirline {
+    function fund() public payable requireIsOperational {
+        require(isRegisteredAirline(msg.sender), "Not registered airline");
         require(msg.value >= FUND_AMOUNT, "Not paid enough");
         require(
-            airlines[msg.sender].hasProvidedFunds,
+            !airlines[msg.sender].hasProvidedFunds,
             "You have alredy provided funds"
         );
         airlines[msg.sender].hasProvidedFunds = true;
-        contractOwner.transfer(FUND_AMOUNT);
+        contractOwner.transfer(msg.value);
     }
 
     function getFlightKey(
@@ -262,7 +262,7 @@ contract FlightSuretyData {
      *
      */
     fallback() external payable {
-        fund();
+        revert("fallback");
     }
 
     receive() external payable {
