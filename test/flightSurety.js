@@ -168,13 +168,11 @@ contract('Flight Surety Tests', async (accounts) => {
 
         // ARRANGE
         let airlineWithoutFunds = accounts[4];
-
         result1 = await config.flightSuretyData.isAirlineWithFunds.call(airlineWithoutFunds);
 
         // Fund and try again
-        let revertedWithFund = false;
         try {
-            await config.flightSuretyData.fund({from: accounts[4], value: web3.utils.toWei('10', 'ether')});
+            await config.flightSuretyApp.fund({from: accounts[4], value: web3.utils.toWei('10', 'ether')});
         }
         catch (e) {
             console.log(e);
@@ -186,4 +184,5 @@ contract('Flight Surety Tests', async (accounts) => {
         assert.equal(result2, true, "Airline cannot participate with funds");
 
     });
+
 });

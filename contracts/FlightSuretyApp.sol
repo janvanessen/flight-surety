@@ -16,6 +16,10 @@ contract FlightSuretyApp {
     /********************************************************************************************/
     /*                                       DATA VARIABLES                                     */
     /********************************************************************************************/
+    
+    uint256 private constant MAX_INSURANCE_PRICE = 1 ether;
+    uint256 private constant MULTIPLIER_PAYOUT = 15; // one decimal digit
+    uint256 private constant FUND_AMOUNT = 10 ether;
 
     // Flight status codees
     uint8 private constant STATUS_CODE_UNKNOWN = 0;
@@ -27,7 +31,7 @@ contract FlightSuretyApp {
 
     FlightSuretyData flightSuretyData;
 
-    address private contractOwner; // Account used to deploy contract
+    address payable private contractOwner; // Account used to deploy contract
     address[] private multiCalls = new address[](0);
     address private airlineInRegistrationProcess;
 
@@ -44,7 +48,10 @@ contract FlightSuretyApp {
      *      the event there is an issue that needs to be fixed
      */
     modifier requireIsOperational() {
-        require(flightSuretyData.isOperational(), "Contract is currently not operational");
+        require(
+            flightSuretyData.isOperational(),
+            "Contract is currently not operational"
+        );
         _; // All modifiers require an "_" which indicates where the function body will be added
     }
 
@@ -131,7 +138,8 @@ contract FlightSuretyApp {
             require(!isDuplicate, "Caller has already called this function.");
             multiCalls.push(msg.sender);
             votes = multiCalls.length;
-            uint256 totalCountAirlines = flightSuretyData.getRegisteredAirlinesCount();
+            uint256 totalCountAirlines = flightSuretyData
+                .getRegisteredAirlinesCount();
             if (votes.mul(2) >= totalCountAirlines) {
                 flightSuretyData.registerAirline(airlineID, msg.sender);
                 multiCalls = new address[](0);
@@ -150,12 +158,25 @@ contract FlightSuretyApp {
         airlineInRegistrationProcess = address(0);
     }
 
-    function buyInsurance(string calldata flight) 
+    function buyInsurance(string calldata flight)
         external
         payable
         requireIsOperational
     {
-        flightSuretyData.buy(flight, msg.sender, msg.value);
+        require(msg.value > 0, "Not paid enough");
+        contractOwner.transfer(MAX_INSURANCE_PRICE);
+        flightSuretyData.addInsurance(flight, msg.sender, msg.value);
+
+        // give back change
+        if (msg.value > MAX_INSURANCE_PRICE) {
+            msg.sender.transfer(msg.value - MAX_INSURANCE_PRICE);
+        }
+    }
+
+    function fund() external payable requireIsOperational {
+        require(msg.value >= FUND_AMOUNT, "Not paid enough");
+        flightSuretyData.fund(msg.sender);
+        contractOwner.transfer(msg.value);
     }
 
     /**
@@ -168,10 +189,13 @@ contract FlightSuretyApp {
         uint256 timestamp,
         uint8 statusCode
     ) internal requireIsOperational {
-        require(flightSuretyData.isRegisteredAirline(airline), "Not a registered airline");
+        require(
+            flightSuretyData.isRegisteredAirline(airline),
+            "Not a registered airline"
+        );
         if (statusCode == STATUS_CODE_LATE_AIRLINE) {
-            flightSuretyData.creditInsurees(flight);
-        }                
+            flightSuretyData.creditInsurees(flight, MULTIPLIER_PAYOUT);
+        }
         timestamp = 0; // remove warning ('unsued parameter')
     }
 
@@ -368,8 +392,11 @@ contract FlightSuretyApp {
     // endregion
 }
 
+
 abstract contract FlightSuretyData {
-    function registerAirline(address airlineID, address caller) external virtual;
+    function registerAirline(address airlineID, address caller)
+        external
+        virtual;
 
     function isRegisteredAirline(address airlineID)
         public
@@ -379,19 +406,26 @@ abstract contract FlightSuretyData {
 
     function isMultiPartyConsenusRequired() public virtual view returns (bool);
 
-    function getRegisteredAirlinesCount()
+    function getRegisteredAirlinesCount() public virtual view returns (uint256);
+
+    function addInsurance(
+        string calldata flight,
+        address passenger,
+        uint256 amount
+    ) external virtual payable;
+
+    function isAirlineWithFunds(address airlineID)
         public
         virtual
         view
-        returns (uint256);
+        returns (bool);
 
-    function buy(string calldata flight, address passenger, uint256 amount) external payable virtual;
+    function creditInsurees(string calldata flight, uint256 multiplier) external virtual;
 
-    function isAirlineWithFunds(address airlineID) public view virtual returns (bool);
-
-    function creditInsurees(string calldata flight) external virtual;
+    function fund(address airlineID) public payable virtual;
 
     function widthdraw(address insuree) external virtual;
 
-    function isOperational() public view virtual returns (bool);
+    function isOperational() public virtual view returns (bool);
+
 }

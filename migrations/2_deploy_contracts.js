@@ -5,9 +5,13 @@ const fs = require('fs');
 module.exports = function(deployer) {
 
     deployer.deploy(FlightSuretyData)
-    .then(() => {
+    .then((dataContract) => {
         return deployer.deploy(FlightSuretyApp, FlightSuretyData.address)
-                .then(() => {
+                .then(async () => {
+
+
+                    await dataContract.authorizeCaller(FlightSuretyApp.address);
+
                     let config = {
                         localhost: {
                             url: 'http://localhost:7545',

@@ -7,14 +7,12 @@ contract FlightSuretyData {
     using SafeMath for uint256;
 
     uint8 private constant MULTI_PARTY_MIN_COUNT = 5;
-    uint256 private constant FUND_AMOUNT = 10 ether;
-    uint256 private constant MAX_INSURANCE_PRICE = 1 ether;
 
     /********************************************************************************************/
     /*                                       DATA VARIABLES                                     */
     /********************************************************************************************/
 
-    address payable private contractOwner; // Account used to deploy contract
+    address private contractOwner; // Account used to deploy contract
     address private appContract;
     bool private operational = true; // Blocks all state changes throughout the contract if false
 
@@ -29,12 +27,13 @@ contract FlightSuretyData {
         uint256 amount;
     }
 
+
+    Insurance[] insurances;
+
     uint256 private airlineCounter;
     mapping(address => Airline) private airlines;
-    Insurance[] private insurances;
     mapping(address => uint256) private credits;
-
-    mapping(address => bool) private authorizedCallers; // for testing
+    mapping(address => bool) private authorizedCallers;
 
     /********************************************************************************************/
     /*                                       EVENT DEFINITIONS                                  */
@@ -47,7 +46,8 @@ contract FlightSuretyData {
     constructor() public {
         contractOwner = msg.sender;
         // First airline is registered when contract is deployed.
-        registerAirline(contractOwner, contractOwner); 
+        registerAirline(contractOwner, contractOwner);
+        authorizedCallers[contractOwner] = true;
     }
 
     /********************************************************************************************/
@@ -72,11 +72,6 @@ contract FlightSuretyData {
      */
     modifier requireContractOwner() {
         require(msg.sender == contractOwner, "Caller is not contract owner");
-        _;
-    }
-
-    modifier paidEnough(uint256 _price) {
-        require(msg.value >= FUND_AMOUNT, "Not paid enough");
         _;
     }
 
@@ -124,9 +119,11 @@ contract FlightSuretyData {
             keccak256(abi.encodePacked(s1)) == keccak256(abi.encodePacked(s2));
     }
 
-    function authorizeCaller(address caller) external requireContractOwner {
+    function authorizeCaller(address caller) public requireContractOwner {
         authorizedCallers[caller] = true;
     }
+
+    function test() public {}
 
     /**
      * @dev Sets contract operations on/off
@@ -136,7 +133,6 @@ contract FlightSuretyData {
     function setOperatingStatus(bool status) public requireContractOwner {
         operational = status;
     }
-
 
     /********************************************************************************************/
     /*                                     SMART CONTRACT FUNCTIONS                             */
@@ -148,7 +144,10 @@ contract FlightSuretyData {
      *
      */
 
-    function registerAirline(address airlineID, address caller) public requireIsOperational {
+    function registerAirline(address airlineID, address caller)
+        public
+        requireIsOperational
+    {
         if (airlineCounter > 0) {
             require(
                 isRegisteredAirline(caller),
@@ -182,39 +181,32 @@ contract FlightSuretyData {
      *
      */
 
-    function buy(
+    function addInsurance(
         string calldata flight,
-        address payable passenger,
+        address passenger,
         uint256 amount
-    ) external payable requireIsOperational {
-        require(amount > 0, "Not paid enough");
-        Insurance memory insurance = Insurance({
+    ) external requireIsOperational requireAuthorizedCaller {
+        insurances.push(Insurance({
             flight: flight,
             passenger: passenger,
             amount: amount
-        });
-        insurances.push(insurance);
-
-        // give back change
-        if (amount > MAX_INSURANCE_PRICE) {
-            uint256 amountToReturn = amount - MAX_INSURANCE_PRICE;
-            passenger.transfer(amountToReturn);
-        }
+        }));
     }
 
     /**
      *  @dev Credits payouts to insurees
      */
-    function creditInsurees(string calldata flight)
+    function creditInsurees(string calldata flight, uint256 multiplier)
         external
         requireIsOperational
+        requireAuthorizedCaller
     {
         for (uint256 i = 0; i < insurances.length; i++) {
             if (compareStringsbyBytes(insurances[i].flight, flight)) {
                 address passenger = insurances[i].passenger;
                 uint256 insuranceAmount = insurances[i].amount;
                 uint256 creditsBefore = credits[passenger];
-                uint256 newCredits = insuranceAmount.mul(15).div(10);
+                uint256 newCredits = insuranceAmount.mul(multiplier).div(10);
                 insurances[i].amount = 0;
                 credits[passenger] = creditsBefore.add(newCredits);
             }
@@ -238,15 +230,17 @@ contract FlightSuretyData {
      *
      */
 
-    function fund() public payable requireIsOperational {
-        require(isRegisteredAirline(msg.sender), "Not registered airline");
-        require(msg.value >= FUND_AMOUNT, "Not paid enough");
+    function fund(address airlineID)
+        public
+        requireIsOperational
+        requireAuthorizedCaller
+    {
+        require(isRegisteredAirline(airlineID), "Not registered airline");
         require(
-            !airlines[msg.sender].hasProvidedFunds,
+            !airlines[airlineID].hasProvidedFunds,
             "You have alredy provided funds"
         );
-        airlines[msg.sender].hasProvidedFunds = true;
-        contractOwner.transfer(msg.value);
+        airlines[airlineID].hasProvidedFunds = true;
     }
 
     function getFlightKey(
@@ -266,6 +260,5 @@ contract FlightSuretyData {
     }
 
     receive() external payable {
-        fund();
     }
 }
